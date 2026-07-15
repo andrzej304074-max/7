@@ -53,7 +53,7 @@
         ' (UTC' + (teraz.getTimezoneOffset() <= 0 ? '+' : '-') +
         Math.abs(teraz.getTimezoneOffset() / 60) + ')',
       tryb,
-      wersjaSkryptu: 2,
+      wersjaSkryptu: 3,
     };
 
     /* ===== 2: data docelowa i etykieta ===== */
@@ -75,9 +75,9 @@
     const etykietaDaty =
       dzienTygodnia + ', ' + miesiac + ' ' + dzien + koncowka(dzien) + ', ' + data.getFullYear();
 
-    // po 13:30:  „Thursday, July 16th, 2026"
+    // po 13:30:  „Thursday, July 16th, 2026, selected"
     // przed 13:30: „Today, Wednesday, July 15th, 2026, selected"
-    const etykieta = poGranicy ? etykietaDaty : 'Today, ' + etykietaDaty + ', selected';
+    const etykieta = (poGranicy ? '' : 'Today, ') + etykietaDaty + ', selected';
     diagnostyka.etykieta = etykieta;
 
     /* ===== 3: czekaj na klikalny przycisk ===== */
@@ -94,7 +94,7 @@
       let lista = [];
       try {
         lista = Array.prototype.slice.call(
-          document.querySelectorAll('button[aria-label*="' + etykieta + '"]')
+          document.querySelectorAll('button[aria-label="' + etykieta + '"]')
         );
       } catch (_) { lista = []; }
       return lista.find(
