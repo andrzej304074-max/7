@@ -1,10 +1,23 @@
+/*
+ * Blok JavaScript dla Automy — klika przycisk dnia w kalendarzu.
+ *
+ * Zasada działania (wg zegara KOMPUTERA, na którym działa przeglądarka):
+ *  - od 00:00 do 13:29  → klika DZISIEJSZY przycisk:
+ *      button[aria-label="Today, Wednesday, July 15th, 2026, selected"]
+ *  - od 13:30 do 23:59  → klika JUTRZEJSZY przycisk:
+ *      button[aria-label="Thursday, July 16th, 2026, selected"]
+ *
+ * Wymagania w Automie:
+ *  - „Execution context" bloku: Active tab
+ *  - timeout bloku: min. 20 s
+ */
 (async () => {
   /* ====== KONFIGURACJA ====== */
   const GODZINA_GRANICZNA = 13;   // godzina graniczna (13:30)
-  const MINUTA_GRANICZNA = 30;    // od 13:30 do północy → jutro; od północy do 13:29 → dzisiaj
-  const WYMUS_TRYB = 'auto';      // 'auto' = wg zegara; 'dzisiaj' / 'jutro' = wymuszenie do testów
+  const MINUTA_GRANICZNA = 30;    // od 13:30 do północy → jutro; wcześniej → dzisiaj
+  const WYMUS_TRYB = 'auto';      // 'auto' = wg zegara komputera; 'dzisiaj' / 'jutro' = wymuszenie do testów
   const MAKS_CZEKANIE_MS = 15000; // ile czekać na przycisk; 0 = bez limitu
-  const INTERWAL_MS = 200;        // co ile ponawiać szukanie
+  const INTERWAL_MS = 200;        // co ile ponawiać sprawdzanie
   /* ========================== */
 
   const bezLimitu = !(MAKS_CZEKANIE_MS > 0);
@@ -33,7 +46,7 @@
 
     const czekaj = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    /* ===== 1: tryb wg godziny — po 13:30 jutro, przed 13:30 dzisiaj ===== */
+    /* ===== 1: data i godzina z zegara komputera ===== */
     const teraz = new Date();
     let poGranicy;
     if (WYMUS_TRYB === 'jutro') poGranicy = true;
@@ -44,19 +57,16 @@
         (teraz.getHours() === GODZINA_GRANICZNA && teraz.getMinutes() >= MINUTA_GRANICZNA);
     const tryb = poGranicy ? 'jutro' : 'dzisiaj';
 
-    // diagnostyka: czas, jaki faktycznie widzi przeglądarka (to on decyduje o trybie)
+    // diagnostyka: czas odczytany z komputera (to on decyduje o trybie)
     const diagnostyka = {
-      czasPrzegladarki: teraz.toString(),
+      czasKomputera: teraz.toString(),
       godzina:
         String(teraz.getHours()).padStart(2, '0') + ':' + String(teraz.getMinutes()).padStart(2, '0'),
-      strefa: (Intl.DateTimeFormat().resolvedOptions().timeZone || '') +
-        ' (UTC' + (teraz.getTimezoneOffset() <= 0 ? '+' : '-') +
-        Math.abs(teraz.getTimezoneOffset() / 60) + ')',
       tryb,
-      wersjaSkryptu: 3,
+      wersjaSkryptu: 4,
     };
 
-    /* ===== 2: data docelowa i etykieta ===== */
+    /* ===== 2: data docelowa i etykiety wg schematu strony ===== */
     const data = new Date(teraz);
     if (poGranicy) data.setDate(data.getDate() + 1);
 
@@ -70,17 +80,21 @@
         default: return 'th';
       }
     };
-    const dzienTygodnia = data.toLocaleDateString('en-US', { weekday: 'long' });
-    const miesiac = data.toLocaleDateString('en-US', { month: 'long' });
     const etykietaDaty =
-      dzienTygodnia + ', ' + miesiac + ' ' + dzien + koncowka(dzien) + ', ' + data.getFullYear();
+      data.toLocaleDateString('en-US', { weekday: 'long' }) + ', ' +
+      data.toLocaleDateString('en-US', { month: 'long' }) + ' ' +
+      dzien + koncowka(dzien) + ', ' + data.getFullYear();
 
-    // po 13:30:  „Thursday, July 16th, 2026, selected"
-    // przed 13:30: „Today, Wednesday, July 15th, 2026, selected"
-    const etykieta = (poGranicy ? '' : 'Today, ') + etykietaDaty + ', selected';
-    diagnostyka.etykieta = etykieta;
+    // dokładne etykiety, w kolejności prób: najpierw z „, selected",
+    // potem bez — na wypadek, gdy strona dopisuje „selected" dopiero po zaznaczeniu
+    const prefiks = poGranicy ? '' : 'Today, ';
+    const kandydaci = [
+      prefiks + etykietaDaty + ', selected',
+      prefiks + etykietaDaty,
+    ];
+    diagnostyka.etykieta = kandydaci[0];
 
-    /* ===== 3: czekaj na klikalny przycisk ===== */
+    /* ===== 3: czekaj, aż przycisk pojawi się na stronie ===== */
     const widoczny = (el) => {
       try {
         const r = el.getBoundingClientRect();
@@ -90,19 +104,21 @@
       } catch (_) { return false; }
     };
 
+    const klikalny = (el) =>
+      el && widoczny(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+
     const znajdzPrzycisk = () => {
-      let lista = [];
-      try {
-        lista = Array.prototype.slice.call(
-          document.querySelectorAll('button[aria-label="' + etykieta + '"]')
-        );
-      } catch (_) { lista = []; }
-      return lista.find(
-        (el) =>
-          widoczny(el) &&
-          !el.disabled &&
-          el.getAttribute('aria-disabled') !== 'true'
-      ) || null;
+      for (let i = 0; i < kandydaci.length; i++) {
+        let lista = [];
+        try {
+          lista = Array.prototype.slice.call(
+            document.querySelectorAll('button[aria-label="' + kandydaci[i] + '"]')
+          );
+        } catch (_) { lista = []; }
+        const el = lista.find(klikalny);
+        if (el) return el;
+      }
+      return null;
     };
 
     const start = Date.now();
@@ -117,6 +133,7 @@
     }
     if (!przycisk) {
       // diagnostyka: pokaż, jakie etykiety z datami strona faktycznie ma
+      const miesiac = data.toLocaleDateString('en-US', { month: 'long' });
       let przykladoweEtykiety = [];
       try {
         przykladoweEtykiety = Array.prototype.slice
@@ -127,7 +144,7 @@
       } catch (_) {}
       return zakoncz(Object.assign({}, diagnostyka, {
         ok: false,
-        error: 'Nie znaleziono klikalnego przycisku o aria-label zawierającym: „' + etykieta + '".',
+        error: 'Nie znaleziono klikalnego przycisku o aria-label: „' + kandydaci.join('" ani „') + '".',
         przykladoweEtykiety,
       }));
     }
