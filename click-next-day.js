@@ -2,6 +2,7 @@
   /* ====== KONFIGURACJA ====== */
   const GODZINA_GRANICZNA = 13;   // godzina graniczna (13:30)
   const MINUTA_GRANICZNA = 30;    // od 13:30 do północy → jutro; od północy do 13:29 → dzisiaj
+  const WYMUS_TRYB = 'auto';      // 'auto' = wg zegara; 'dzisiaj' / 'jutro' = wymuszenie do testów
   const MAKS_CZEKANIE_MS = 15000; // ile czekać na przycisk; 0 = bez limitu
   const INTERWAL_MS = 200;        // co ile ponawiać szukanie
   /* ========================== */
@@ -12,8 +13,8 @@
   const zakoncz = (dane) => {
     if (zakonczono) return;
     zakonczono = true;
+    console.log('[click-next-day]', dane);
     if (typeof automaNextBlock === 'function') automaNextBlock(dane);
-    else console.log('[click-next-day]', dane);
   };
 
   if (!bezLimitu) {
@@ -34,10 +35,26 @@
 
     /* ===== 1: tryb wg godziny — po 13:30 jutro, przed 13:30 dzisiaj ===== */
     const teraz = new Date();
-    const poGranicy =
-      teraz.getHours() > GODZINA_GRANICZNA ||
-      (teraz.getHours() === GODZINA_GRANICZNA && teraz.getMinutes() >= MINUTA_GRANICZNA);
+    let poGranicy;
+    if (WYMUS_TRYB === 'jutro') poGranicy = true;
+    else if (WYMUS_TRYB === 'dzisiaj') poGranicy = false;
+    else
+      poGranicy =
+        teraz.getHours() > GODZINA_GRANICZNA ||
+        (teraz.getHours() === GODZINA_GRANICZNA && teraz.getMinutes() >= MINUTA_GRANICZNA);
     const tryb = poGranicy ? 'jutro' : 'dzisiaj';
+
+    // diagnostyka: czas, jaki faktycznie widzi przeglądarka (to on decyduje o trybie)
+    const diagnostyka = {
+      czasPrzegladarki: teraz.toString(),
+      godzina:
+        String(teraz.getHours()).padStart(2, '0') + ':' + String(teraz.getMinutes()).padStart(2, '0'),
+      strefa: (Intl.DateTimeFormat().resolvedOptions().timeZone || '') +
+        ' (UTC' + (teraz.getTimezoneOffset() <= 0 ? '+' : '-') +
+        Math.abs(teraz.getTimezoneOffset() / 60) + ')',
+      tryb,
+      wersjaSkryptu: 2,
+    };
 
     /* ===== 2: data docelowa i etykieta ===== */
     const data = new Date(teraz);
@@ -61,6 +78,7 @@
     // po 13:30:  „Thursday, July 16th, 2026"
     // przed 13:30: „Today, Wednesday, July 15th, 2026, selected"
     const etykieta = poGranicy ? etykietaDaty : 'Today, ' + etykietaDaty + ', selected';
+    diagnostyka.etykieta = etykieta;
 
     /* ===== 3: czekaj na klikalny przycisk ===== */
     const widoczny = (el) => {
@@ -98,12 +116,20 @@
       przycisk = znajdzPrzycisk();
     }
     if (!przycisk) {
-      return zakoncz({
+      // diagnostyka: pokaż, jakie etykiety z datami strona faktycznie ma
+      let przykladoweEtykiety = [];
+      try {
+        przykladoweEtykiety = Array.prototype.slice
+          .call(document.querySelectorAll('button[aria-label]'))
+          .map((el) => el.getAttribute('aria-label'))
+          .filter((t) => t && (t.indexOf(miesiac) !== -1 || t.indexOf('Today') !== -1))
+          .slice(0, 15);
+      } catch (_) {}
+      return zakoncz(Object.assign({}, diagnostyka, {
         ok: false,
-        tryb,
-        etykieta,
         error: 'Nie znaleziono klikalnego przycisku o aria-label zawierającym: „' + etykieta + '".',
-      });
+        przykladoweEtykiety,
+      }));
     }
 
     /* ===== 4: kliknięcie pełną sekwencją zdarzeń ===== */
@@ -122,13 +148,11 @@
     przycisk.dispatchEvent(new MouseEvent('mouseup', props));
     przycisk.dispatchEvent(new MouseEvent('click', props));
 
-    zakoncz({
+    zakoncz(Object.assign({}, diagnostyka, {
       ok: true,
-      tryb,
-      etykieta,
       kliknieto: przycisk.getAttribute('aria-label'),
       czekalemMs: Date.now() - start,
-    });
+    }));
   } catch (err) {
     zakoncz({ ok: false, error: (err && err.message) || String(err) });
   }
