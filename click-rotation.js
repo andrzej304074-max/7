@@ -2,12 +2,18 @@
  * Blok JavaScript dla Automy — ROTACJA PRZYCISKÓW.
  *
  * Przy każdym uruchomieniu workflow klika DOKŁADNIE JEDEN przycisk
- * z listy PRZYCISKI — za każdym razem następny z kolei, a po ostatnim
- * wraca do pierwszego. Dzięki temu kliknięcia rozkładają się równomiernie.
+ * pasujący do SELEKTOR — za każdym razem następny z kolei (wg kolejności
+ * na stronie), a po ostatnim wraca do pierwszego. Dzięki temu kliknięcia
+ * rozkładają się równomiernie, choć każde odpalenie workflow jest osobne.
+ *
+ * Nie trzeba wypisywać :nth-child(1), :nth-child(2)… — skrypt sam
+ * znajduje wszystkie przyciski pasujące do selektora i numeruje je
+ * w kolejności występowania na stronie.
  *
  * Numer kolejki jest zapamiętywany w localStorage strony, więc przetrwa
- * między osobnymi uruchomieniami workflow (ten sam komputer, ta sama
- * przeglądarka i ta sama strona; wyczyszczenie danych strony zeruje kolejkę).
+ * między uruchomieniami workflow — także w nowych oknach i kartach tego
+ * samego profilu przeglądarki (ale nie w incognito i nie na innym
+ * komputerze; wyczyszczenie danych strony zeruje kolejkę).
  *
  * Wymagania w Automie:
  *  - „Execution context" bloku: Active tab
@@ -15,14 +21,9 @@
  */
 (async () => {
   /* ====== KONFIGURACJA ====== */
-  const PRZYCISKI = [
-    'button[aria-label="TU WKLEJ ARIA-LABEL PRZYCISKU 1"]',
-    'button[aria-label="TU WKLEJ ARIA-LABEL PRZYCISKU 2"]',
-    'button[aria-label="TU WKLEJ ARIA-LABEL PRZYCISKU 3"]',
-  ];
-  const KLUCZ_LICZNIKA = 'automa_rotacja_przyciskow'; // nazwa licznika w localStorage
-  const PROBUJ_NASTEPNE = true;   // gdy przycisku z kolejki nie ma → kliknij kolejny dostępny z listy
-  const MAKS_CZEKANIE_MS = 15000; // ile czekać na przycisk z kolejki; 0 = bez limitu
+  const SELEKTOR = 'button[data-testid="platform-VINTED"]'; // wspólny selektor wszystkich przycisków
+  const KLUCZ_LICZNIKA = 'automa_rotacja_przyciskow';       // nazwa licznika w localStorage
+  const MAKS_CZEKANIE_MS = 15000; // ile czekać, aż przyciski pojawią się na stronie; 0 = bez limitu
   const INTERWAL_MS = 200;        // co ile ponawiać sprawdzanie
   /* ========================== */
 
@@ -49,26 +50,21 @@
         error: 'Brak dostępu do strony — ustaw "Execution context" bloku na "Active tab".',
       });
     }
-    if (!PRZYCISKI.length) {
-      return zakoncz({ ok: false, error: 'Lista PRZYCISKI jest pusta — wpisz selektory przycisków.' });
-    }
 
     const czekaj = (ms) => new Promise((r) => setTimeout(r, ms));
-    const N = PRZYCISKI.length;
 
-    /* ===== 1: odczytaj z localStorage, czyj teraz ruch ===== */
-    const odczytajIndeks = () => {
+    /* ===== 1: licznik rotacji w localStorage ===== */
+    const odczytajLicznik = () => {
       try {
         const v = parseInt(localStorage.getItem(KLUCZ_LICZNIKA), 10);
-        return Number.isInteger(v) && v >= 0 ? v % N : 0;
+        return Number.isInteger(v) && v >= 0 ? v : 0;
       } catch (_) { return 0; }
     };
-    const zapiszIndeks = (i) => {
-      try { localStorage.setItem(KLUCZ_LICZNIKA, String(i % N)); } catch (_) {}
+    const zapiszLicznik = (v) => {
+      try { localStorage.setItem(KLUCZ_LICZNIKA, String(v % 1000000)); } catch (_) {}
     };
-    const indeksStartowy = odczytajIndeks();
 
-    /* ===== 2: szukanie klikalnego przycisku ===== */
+    /* ===== 2: zbieranie klikalnych przycisków ===== */
     const widoczny = (el) => {
       try {
         const r = el.getBoundingClientRect();
@@ -79,58 +75,40 @@
     };
     const klikalny = (el) =>
       el && widoczny(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
-    const znajdz = (selektor) => {
+    const zbierz = () => {
       let lista = [];
       try {
-        lista = Array.prototype.slice.call(document.querySelectorAll(selektor));
+        lista = Array.prototype.slice.call(document.querySelectorAll(SELEKTOR));
       } catch (_) { lista = []; }
-      return lista.find(klikalny) || null;
+      return lista.filter(klikalny);
     };
 
-    /* ===== 3: czekaj na przycisk, którego jest teraz kolej ===== */
+    /* ===== 3: czekaj, aż przyciski pojawią się na stronie ===== */
     const start = Date.now();
-    let wybranyIndeks = indeksStartowy;
-    let przycisk = znajdz(PRZYCISKI[wybranyIndeks]);
-    while (!przycisk) {
+    let dostepne = zbierz();
+    while (!dostepne.length) {
       if (!bezLimitu && Date.now() - start >= MAKS_CZEKANIE_MS) break;
       if (typeof automaResetTimeout === 'function') {
         try { automaResetTimeout(); } catch (_) {}
       }
       await czekaj(INTERWAL_MS);
-      przycisk = znajdz(PRZYCISKI[wybranyIndeks]);
+      dostepne = zbierz();
     }
-
-    // przycisku z kolejki nie ma — opcjonalnie weź kolejny dostępny z listy
-    if (!przycisk && PROBUJ_NASTEPNE) {
-      for (let k = 1; k < N && !przycisk; k++) {
-        const kandydat = (indeksStartowy + k) % N;
-        const el = znajdz(PRZYCISKI[kandydat]);
-        if (el) {
-          przycisk = el;
-          wybranyIndeks = kandydat;
-        }
-      }
-    }
-
-    if (!przycisk) {
-      let przykladoweEtykiety = [];
-      try {
-        przykladoweEtykiety = Array.prototype.slice
-          .call(document.querySelectorAll('button[aria-label]'))
-          .filter(widoczny)
-          .map((el) => el.getAttribute('aria-label'))
-          .slice(0, 15);
-      } catch (_) {}
+    if (!dostepne.length) {
+      let znalezionoWszystkich = 0;
+      try { znalezionoWszystkich = document.querySelectorAll(SELEKTOR).length; } catch (_) {}
       return zakoncz({
         ok: false,
-        error: 'Żaden przycisk z listy nie jest dostępny na stronie.',
-        kolejByla: indeksStartowy + 1,
-        selektorZKolejki: PRZYCISKI[indeksStartowy],
-        przykladoweEtykiety,
+        error: 'Nie znaleziono żadnego klikalnego przycisku pasującego do: ' + SELEKTOR,
+        znalezionoWszystkich, // ile elementów pasuje do selektora, licząc też ukryte/wyłączone
       });
     }
 
-    /* ===== 4: kliknięcie pełną sekwencją zdarzeń ===== */
+    /* ===== 4: wybór przycisku wg kolejki i kliknięcie ===== */
+    const licznik = odczytajLicznik();
+    const indeks = licznik % dostepne.length;
+    const przycisk = dostepne[indeks];
+
     try { przycisk.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
     const r = przycisk.getBoundingClientRect();
     const props = {
@@ -146,15 +124,17 @@
     przycisk.dispatchEvent(new MouseEvent('mouseup', props));
     przycisk.dispatchEvent(new MouseEvent('click', props));
 
-    /* ===== 5: zapisz, że następnym razem ma być kolejny przycisk ===== */
-    zapiszIndeks(wybranyIndeks + 1);
+    /* ===== 5: przesuń kolejkę na następny przycisk ===== */
+    zapiszLicznik(licznik + 1);
 
     zakoncz({
       ok: true,
-      klikniety: (wybranyIndeks + 1) + ' z ' + N,
-      selektor: PRZYCISKI[wybranyIndeks],
-      kliknieto: przycisk.getAttribute('aria-label'),
-      nastepnyBedzie: ((wybranyIndeks + 1) % N) + 1,
+      klikniety: (indeks + 1) + ' z ' + dostepne.length,
+      kliknieto:
+        przycisk.getAttribute('aria-label') ||
+        (przycisk.textContent || '').trim().slice(0, 80) ||
+        SELEKTOR + ':nth (' + (indeks + 1) + ')',
+      nastepnyBedzie: ((licznik + 1) % dostepne.length) + 1,
       czekalemMs: Date.now() - start,
     });
   } catch (err) {
