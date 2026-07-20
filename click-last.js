@@ -1,9 +1,10 @@
 /*
  * Blok JavaScript dla Automy — KLIKNIJ OSTATNI BLOK W KONTENERZE.
  *
- * Znajduje kontener (KONTENER), zbiera bloki znajdujące się w jego środku
- * (ELEMENTY), czeka aż lista przestanie się doładowywać i klika OSTATNI
- * widoczny blok z tej listy.
+ * Bierze ostatnie (widoczne) dziecko kontenera KONTENER i klika je.
+ * Jeśli w środku bloku jest właściwy klikalny element (a / button /
+ * [role=button] / [onclick]), klika ten element. Bloki mogą mieć różny
+ * format — skrypt nie zakłada nic o ich wyglądzie.
  *
  * Wymagania w Automie:
  *  - „Execution context" bloku: Active tab
@@ -11,16 +12,13 @@
  */
 (async () => {
   /* ====== KONFIGURACJA ====== */
-  const KONTENER = 'div.p-1:nth-child(2)'; // selektor bloku-kontenera
-  const ELEMENTY = ':scope > *';           // co liczyć jako bloki w środku: dzieci kontenera
-                                           // (można zawęzić, np. ':scope > div' albo 'button')
-  const STABILIZACJA_MS = 800;    // ile ms liczba bloków ma się nie zmieniać, zanim klikniemy ostatni
-  const MAKS_CZEKANIE_MS = 15000; // maksymalny łączny czas czekania; 0 = bez limitu
-  const INTERWAL_MS = 200;        // co ile ponawiać sprawdzanie
+  const KONTENER = 'div.p-1:nth-child(2)'; // selektor kontenera z blokami
+  const STABILIZACJA_MS = 800;    // ile ms liczba bloków ma się nie zmieniać, zanim klikniemy
+  const MAKS_CZEKANIE_MS = 15000; // maksymalny czas czekania; 0 = bez limitu
+  const INTERWAL_MS = 200;
   /* ========================== */
 
   const bezLimitu = !(MAKS_CZEKANIE_MS > 0);
-
   let zakonczono = false;
   const zakoncz = (dane) => {
     if (zakonczono) return;
@@ -28,21 +26,14 @@
     console.log('[click-last]', dane);
     if (typeof automaNextBlock === 'function') automaNextBlock(dane);
   };
-
   if (!bezLimitu) {
-    setTimeout(() => {
-      zakoncz({ ok: false, error: 'watchdog: skrypt nie zakończył się w limicie' });
-    }, MAKS_CZEKANIE_MS + 2000);
+    setTimeout(() => zakoncz({ ok: false, error: 'watchdog: przekroczono limit' }), MAKS_CZEKANIE_MS + 2000);
   }
 
   try {
     if (typeof document === 'undefined' || !document.documentElement) {
-      return zakoncz({
-        ok: false,
-        error: 'Brak dostępu do strony — ustaw "Execution context" bloku na "Active tab".',
-      });
+      return zakoncz({ ok: false, error: 'Brak dostępu do strony — ustaw Execution context na "Active tab".' });
     }
-
     const czekaj = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const widoczny = (el) => {
@@ -53,77 +44,72 @@
         return st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0';
       } catch (_) { return false; }
     };
-    const klikalny = (el) =>
-      el && widoczny(el) && !el.disabled && el.getAttribute('aria-disabled') !== 'true';
 
-    const zbierz = () => {
-      let kontener = null;
-      try { kontener = document.querySelector(KONTENER); } catch (_) {}
-      if (!kontener) return { kontener: null, bloki: [] };
-      let bloki = [];
-      try {
-        bloki = Array.prototype.slice.call(kontener.querySelectorAll(ELEMENTY));
-      } catch (_) { bloki = []; }
-      return { kontener, bloki: bloki.filter(klikalny) };
+    const dzieci = () => {
+      let k = null;
+      try { k = document.querySelector(KONTENER); } catch (_) {}
+      if (!k) return { kontener: null, lista: [] };
+      const lista = Array.prototype.slice.call(k.children).filter(widoczny);
+      return { kontener: k, lista };
     };
 
-    /* ===== 1: czekaj na kontener i bloki; kliknij dopiero, gdy lista
-       przestanie rosnąć (żeby „ostatni" był naprawdę ostatni) ===== */
+    /* 1: czekaj aż kontener ma bloki i lista przestanie rosnąć */
     const start = Date.now();
-    let stan = zbierz();
-    let poprzedniaLiczba = stan.bloki.length;
+    let st = dzieci();
+    let ostatniaLiczba = st.lista.length;
     let stabilnyOd = Date.now();
     while (true) {
-      if (stan.bloki.length > 0 && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
+      if (st.lista.length > 0 && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
       if (!bezLimitu && Date.now() - start >= MAKS_CZEKANIE_MS) break;
-      if (typeof automaResetTimeout === 'function') {
-        try { automaResetTimeout(); } catch (_) {}
-      }
+      if (typeof automaResetTimeout === 'function') { try { automaResetTimeout(); } catch (_) {} }
       await czekaj(INTERWAL_MS);
-      stan = zbierz();
-      if (stan.bloki.length !== poprzedniaLiczba) {
-        poprzedniaLiczba = stan.bloki.length;
-        stabilnyOd = Date.now();
-      }
+      st = dzieci();
+      if (st.lista.length !== ostatniaLiczba) { ostatniaLiczba = st.lista.length; stabilnyOd = Date.now(); }
     }
 
-    if (!stan.kontener) {
-      return zakoncz({
-        ok: false,
-        error: 'Nie znaleziono kontenera pasującego do: ' + KONTENER,
-      });
-    }
-    if (!stan.bloki.length) {
-      return zakoncz({
-        ok: false,
-        error: 'Kontener istnieje, ale nie ma w nim żadnego widocznego bloku (' + ELEMENTY + ').',
-      });
-    }
+    if (!st.kontener) return zakoncz({ ok: false, error: 'Nie znaleziono kontenera: ' + KONTENER });
+    if (!st.lista.length) return zakoncz({ ok: false, error: 'Kontener nie ma widocznych bloków.' });
 
-    /* ===== 2: kliknij ostatni blok pełną sekwencją zdarzeń ===== */
-    const przycisk = stan.bloki[stan.bloki.length - 1];
-    try { przycisk.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
-    const r = przycisk.getBoundingClientRect();
-    const props = {
-      bubbles: true, cancelable: true, composed: true, view: window, button: 0,
-      clientX: r.left + r.width / 2,
-      clientY: r.top + r.height / 2,
+    /* 2: ostatni blok + znalezienie w nim właściwego klikalnego elementu */
+    const blok = st.lista[st.lista.length - 1];
+    let cel = blok;
+    try {
+      const wewn = blok.querySelector('a, button, [role="button"], [onclick]');
+      if (wewn && widoczny(wewn)) cel = wewn;
+    } catch (_) {}
+
+    /* 3: kliknięcie — pełna sekwencja zdarzeń + natywny click + trafienie w punkt */
+    try { cel.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+    await czekaj(150);
+    const r = cel.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const props = { bubbles: true, cancelable: true, composed: true, view: window, button: 0, clientX: cx, clientY: cy };
+
+    // element faktycznie na wierzchu w tym punkcie (np. nakładka przechwytująca klik)
+    let naWierzchu = cel;
+    try { naWierzchu = document.elementFromPoint(cx, cy) || cel; } catch (_) {}
+
+    const klik = (el) => {
+      try {
+        el.dispatchEvent(new PointerEvent('pointerover', props));
+        el.dispatchEvent(new MouseEvent('mouseover', props));
+        el.dispatchEvent(new PointerEvent('pointerdown', props));
+        el.dispatchEvent(new MouseEvent('mousedown', props));
+        el.dispatchEvent(new PointerEvent('pointerup', props));
+        el.dispatchEvent(new MouseEvent('mouseup', props));
+        el.dispatchEvent(new MouseEvent('click', props));
+      } catch (_) {}
+      try { if (typeof el.click === 'function') el.click(); } catch (_) {}
     };
-    przycisk.dispatchEvent(new PointerEvent('pointerover', props));
-    przycisk.dispatchEvent(new MouseEvent('mouseover', props));
-    przycisk.dispatchEvent(new PointerEvent('pointerdown', props));
-    przycisk.dispatchEvent(new MouseEvent('mousedown', props));
-    przycisk.dispatchEvent(new PointerEvent('pointerup', props));
-    przycisk.dispatchEvent(new MouseEvent('mouseup', props));
-    przycisk.dispatchEvent(new MouseEvent('click', props));
+
+    klik(cel);
+    if (naWierzchu && naWierzchu !== cel && cel.contains(naWierzchu) === false) klik(naWierzchu);
 
     zakoncz({
       ok: true,
-      klikniety: stan.bloki.length + ' z ' + stan.bloki.length + ' (ostatni)',
-      kliknieto:
-        przycisk.getAttribute('aria-label') ||
-        (przycisk.textContent || '').trim().slice(0, 80) ||
-        '<' + przycisk.tagName.toLowerCase() + '>',
+      ktoryBlok: st.lista.length + ' z ' + st.lista.length + ' (ostatni)',
+      klikniety: '<' + cel.tagName.toLowerCase() + '> ' + (cel.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+      naWierzchuByl: '<' + (naWierzchu ? naWierzchu.tagName.toLowerCase() : '?') + '>',
       czekalemMs: Date.now() - start,
     });
   } catch (err) {
