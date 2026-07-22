@@ -1,23 +1,24 @@
 /*
- * Blok JavaScript dla Automy — KLIKNIJ OSTATNI BLOK W KONTENERZE (wersja finalna).
+ * Blok JavaScript dla Automy — KLIKNIJ OSTATNI ELEMENT Z SELEKTORA.
  *
- * 1. Szuka kontenera KONTENER — na stronie, w iframe'ach (same-origin)
- *    i w shadow DOM. Gdy dokładny selektor nic nie łapie, próbuje
- *    SELEKTOR_ZAPASOWY i wybiera kontener z największą liczbą bloków.
- * 2. Czeka, aż lista bloków w środku przestanie się doładowywać.
- * 3. Bierze OSTATNI widoczny blok; jeśli w środku jest właściwy element
- *    klikalny (a / button / [role=button] / [onclick]) — celuje w niego.
- * 4. Klika pełną sekwencją zdarzeń + natywnym click(); jeśli w punkcie
- *    kliknięcia leży nakładka, klika też ją.
- * 5. Wynik pokazuje NA STRONIE (plakietka w rogu: zielona = kliknięte,
+ * Logika: bierze WSZYSTKIE elementy pasujące do selektora
+ * div.p-1:nth-child(2) (na stronie, w iframe'ach same-origin i w shadow DOM),
+ * odfiltrowuje niewidoczne i klika OSTATNI z nich.
+ *
+ * 1. Czeka, aż lista dopasowań przestanie się doładowywać (stabilizacja),
+ *    żeby "ostatni" był naprawdę ostatni.
+ * 2. Jeśli w środku ostatniego bloku jest właściwy element klikalny
+ *    (a / button / [role=button] / [onclick]) — celuje w niego.
+ * 3. Klika pełną sekwencją zdarzeń (pointer + mouse) + natywnym click();
+ *    jeśli w punkcie kliknięcia leży nakładka, klika też ją.
+ * 4. Wynik pokazuje NA STRONIE (plakietka w rogu: zielona = kliknięte,
  *    czerwona = błąd) oraz zwraca przez automaNextBlock.
  *
  * Ustawienia bloku w Automie: Execution context = Active tab, timeout ≥ 20 s.
  */
 (async () => {
   /* ====== KONFIGURACJA ====== */
-  const KONTENER = 'div.p-1:nth-child(2)'; // główny selektor kontenera
-  const SELEKTOR_ZAPASOWY = 'div.p-1';     // gdy główny nic nie złapie
+  const SELEKTOR = 'div.p-1:nth-child(2)'; // bloki = wszystkie dopasowania tego selektora
   const STABILIZACJA_MS = 800;             // ile ms lista ma się nie zmieniać przed kliknięciem
   const MAKS_CZEKANIE_MS = 15000;          // maksymalny czas czekania; 0 = bez limitu
   const INTERWAL_MS = 250;
@@ -109,53 +110,28 @@
       return wyniki;
     };
 
-    /* wybierz kontener: główny selektor, a w razie czego zapasowy
-       (bierzemy ten z największą liczbą widocznych bloków) */
-    const wybierzKontener = () => {
-      let uzytySelektor = KONTENER;
-      let kandydaci = znajdzWszedzie(KONTENER);
-      if (!kandydaci.length && SELEKTOR_ZAPASOWY) {
-        uzytySelektor = SELEKTOR_ZAPASOWY + ' (zapasowy)';
-        kandydaci = znajdzWszedzie(SELEKTOR_ZAPASOWY);
-      }
-      let najlepszy = null, najwiecej = -1;
-      for (let i = 0; i < kandydaci.length; i++) {
-        const n = Array.prototype.slice.call(kandydaci[i].children).filter(widoczny).length;
-        if (n > najwiecej) { najwiecej = n; najlepszy = kandydaci[i]; }
-      }
-      return { kontener: najlepszy, uzytySelektor };
-    };
-
-    const stanBlokow = () => {
-      const w = wybierzKontener();
-      if (!w.kontener) return { kontener: null, lista: [], uzytySelektor: w.uzytySelektor };
-      const lista = Array.prototype.slice.call(w.kontener.children).filter(widoczny);
-      return { kontener: w.kontener, lista, uzytySelektor: w.uzytySelektor };
-    };
+    const widoczneBloki = () => znajdzWszedzie(SELEKTOR).filter(widoczny);
 
     /* czekaj na bloki + stabilizacja listy (żeby "ostatni" był naprawdę ostatni) */
     const start = Date.now();
-    let st = stanBlokow();
-    let poprzednio = st.lista.length;
+    let lista = widoczneBloki();
+    let poprzednio = lista.length;
     let stabilnyOd = Date.now();
     while (true) {
-      if (st.lista.length > 0 && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
+      if (lista.length > 0 && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
       if (!bezLimitu && Date.now() - start >= MAKS_CZEKANIE_MS) break;
       if (typeof automaResetTimeout === 'function') { try { automaResetTimeout(); } catch (_) {} }
       await czekaj(INTERWAL_MS);
-      st = stanBlokow();
-      if (st.lista.length !== poprzednio) { poprzednio = st.lista.length; stabilnyOd = Date.now(); }
+      lista = widoczneBloki();
+      if (lista.length !== poprzednio) { poprzednio = lista.length; stabilnyOd = Date.now(); }
     }
 
-    if (!st.kontener) {
-      return zakoncz({ ok: false, error: 'Nie znaleziono kontenera: ' + KONTENER + ' (ani zapasowego: ' + SELEKTOR_ZAPASOWY + ')' });
-    }
-    if (!st.lista.length) {
-      return zakoncz({ ok: false, error: 'Kontener znaleziony (' + st.uzytySelektor + '), ale nie ma w nim widocznych bloków.' });
+    if (!lista.length) {
+      return zakoncz({ ok: false, error: 'Nie znaleziono zadnego widocznego elementu: ' + SELEKTOR });
     }
 
     /* ostatni blok i właściwy element klikalny w jego środku */
-    const blok = st.lista[st.lista.length - 1];
+    const blok = lista[lista.length - 1];
     let cel = blok;
     try {
       const wewn = blok.querySelector('a, button, [role="button"], [onclick]');
@@ -194,8 +170,8 @@
 
     zakoncz({
       ok: true,
-      uzytySelektor: st.uzytySelektor,
-      ktoryBlok: st.lista.length + ' z ' + st.lista.length + ' (ostatni)',
+      selektor: SELEKTOR,
+      ktoryBlok: lista.length + ' z ' + lista.length + ' (ostatni)',
       klikniety: '<' + cel.tagName.toLowerCase() + '> ' + (cel.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
       czekalemMs: Date.now() - start,
     });
