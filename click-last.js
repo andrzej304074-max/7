@@ -1,27 +1,29 @@
 /*
- * Blok JavaScript dla Automy — KLIKNIJ OSTATNI BLOK W KONTENERZE (wersja finalna).
+ * Blok JavaScript dla Automy — KLIKNIJ OSTATNIĄ POZYCJĘ LISTY ROZWIJANEJ.
  *
- * 1. Szuka kontenera KONTENER — na stronie, w iframe'ach (same-origin)
- *    i w shadow DOM. Gdy dokładny selektor nic nie łapie, próbuje
- *    SELEKTOR_ZAPASOWY i wybiera kontener z największą liczbą bloków.
- * 2. Czeka, aż lista bloków w środku przestanie się doładowywać.
- * 3. Bierze OSTATNI widoczny blok; jeśli w środku jest właściwy element
- *    klikalny (a / button / [role=button] / [onclick]) — celuje w niego.
- * 4. Klika pełną sekwencją zdarzeń + natywnym click(); jeśli w punkcie
- *    kliknięcia leży nakładka, klika też ją.
- * 5. Wynik pokazuje NA STRONIE (plakietka w rogu: zielona = kliknięte,
- *    czerwona = błąd) oraz zwraca przez automaNextBlock.
+ * Przeznaczone dla dropdownów z wyszukiwaniem. Kolejność szukania pozycji:
+ *  1. prawdziwe opcje listy: [role="option"] (tak zbudowana jest większość
+ *     list rozwijanych z wyszukiwarką),
+ *  2. zapasowo: widoczne bloki w kontenerze KONTENER (dzieci), z pominięciem
+ *     elementów <button> — żeby nie klikać stopek typu „pokaż więcej".
+ *
+ * Klika OSTATNIĄ znalezioną pozycję — bezpośrednio w wiersz (bez wchodzenia
+ * w przyciski w środku), pełną sekwencją pointer/mouse + click().
+ * Czeka, aż lista przestanie się zmieniać (wyniki wyszukiwania się ustalą).
+ *
+ * Wynik pokazuje plakietką na stronie (zielona = OK, czerwona = błąd)
+ * i zwraca przez automaNextBlock.
  *
  * Ustawienia bloku w Automie: Execution context = Active tab, timeout ≥ 20 s.
  */
 (async () => {
   /* ====== KONFIGURACJA ====== */
-  const KONTENER = 'div.p-1:nth-child(2)'; // główny selektor kontenera
-  const SELEKTOR_ZAPASOWY = 'div.p-1';     // gdy główny nic nie złapie
+  const KONTENER = 'div.p-1:nth-child(2)'; // zapasowy kontener, gdy brak [role=option]
+  const SELEKTOR_ZAPASOWY = 'div.p-1';
   const STABILIZACJA_MS = 800;             // ile ms lista ma się nie zmieniać przed kliknięciem
   const MAKS_CZEKANIE_MS = 15000;          // maksymalny czas czekania; 0 = bez limitu
   const INTERWAL_MS = 250;
-  const PLAKIETKA_MS = 10000;              // jak długo pokazywać wynik na stronie
+  const PLAKIETKA_MS = 10000;
   /* ========================== */
 
   const bezLimitu = !(MAKS_CZEKANIE_MS > 0);
@@ -49,7 +51,7 @@
     if (zakonczono) return;
     zakonczono = true;
     console.log('[click-last]', dane);
-    if (dane.ok) pokaz('KLIKNIETO: ' + dane.klikniety + '\nblok: ' + dane.ktoryBlok, '#1a7f37');
+    if (dane.ok) pokaz('KLIKNIETO: ' + dane.klikniety + '\nzrodlo: ' + dane.zrodlo + '\npozycja: ' + dane.pozycja, '#1a7f37');
     else pokaz('BLAD: ' + dane.error, '#b91c1c');
     if (typeof automaNextBlock === 'function') automaNextBlock(dane);
   };
@@ -73,24 +75,24 @@
       } catch (_) { return false; }
     };
 
-    /* wszystkie dostępne dokumenty: strona + iframe'y (same-origin) */
+    /* wszystkie dokumenty: strona + iframe'y (same-origin) */
     const dokumenty = () => {
       const docs = [document];
-      const zbierz = (doc) => {
+      const zbierzRamki = (doc) => {
         let ramki = [];
         try { ramki = doc.querySelectorAll('iframe, frame'); } catch (_) {}
         for (let i = 0; i < ramki.length; i++) {
           try {
             const d = ramki[i].contentDocument;
-            if (d && docs.indexOf(d) === -1) { docs.push(d); zbierz(d); }
+            if (d && docs.indexOf(d) === -1) { docs.push(d); zbierzRamki(d); }
           } catch (_) {}
         }
       };
-      zbierz(document);
+      zbierzRamki(document);
       return docs;
     };
 
-    /* wszystkie dopasowania selektora, także w shadow DOM */
+    /* dopasowania selektora także w shadow DOM */
     const znajdzWszedzie = (sel) => {
       const wyniki = [];
       const szukaj = (root) => {
@@ -109,33 +111,32 @@
       return wyniki;
     };
 
-    /* wybierz kontener: główny selektor, a w razie czego zapasowy
-       (bierzemy ten z największą liczbą widocznych bloków) */
-    const wybierzKontener = () => {
-      let uzytySelektor = KONTENER;
+    /* pozycje listy: najpierw role=option, potem bloki kontenera bez <button> */
+    const zbierzPozycje = () => {
+      let opcje = znajdzWszedzie('[role="option"]').filter(widoczny);
+      if (opcje.length) return { zrodlo: '[role=option]', lista: opcje };
+
       let kandydaci = znajdzWszedzie(KONTENER);
+      let zrodlo = KONTENER;
       if (!kandydaci.length && SELEKTOR_ZAPASOWY) {
-        uzytySelektor = SELEKTOR_ZAPASOWY + ' (zapasowy)';
         kandydaci = znajdzWszedzie(SELEKTOR_ZAPASOWY);
+        zrodlo = SELEKTOR_ZAPASOWY + ' (zapasowy)';
       }
       let najlepszy = null, najwiecej = -1;
       for (let i = 0; i < kandydaci.length; i++) {
         const n = Array.prototype.slice.call(kandydaci[i].children).filter(widoczny).length;
         if (n > najwiecej) { najwiecej = n; najlepszy = kandydaci[i]; }
       }
-      return { kontener: najlepszy, uzytySelektor };
+      if (!najlepszy) return { zrodlo, lista: [] };
+      const lista = Array.prototype.slice.call(najlepszy.children)
+        .filter(widoczny)
+        .filter((el) => el.tagName !== 'BUTTON' && !(el.children.length === 1 && el.children[0].tagName === 'BUTTON'));
+      return { zrodlo, lista };
     };
 
-    const stanBlokow = () => {
-      const w = wybierzKontener();
-      if (!w.kontener) return { kontener: null, lista: [], uzytySelektor: w.uzytySelektor };
-      const lista = Array.prototype.slice.call(w.kontener.children).filter(widoczny);
-      return { kontener: w.kontener, lista, uzytySelektor: w.uzytySelektor };
-    };
-
-    /* czekaj na bloki + stabilizacja listy (żeby "ostatni" był naprawdę ostatni) */
+    /* czekaj aż pozycje są i lista przestanie się zmieniać */
     const start = Date.now();
-    let st = stanBlokow();
+    let st = zbierzPozycje();
     let poprzednio = st.lista.length;
     let stabilnyOd = Date.now();
     while (true) {
@@ -143,60 +144,54 @@
       if (!bezLimitu && Date.now() - start >= MAKS_CZEKANIE_MS) break;
       if (typeof automaResetTimeout === 'function') { try { automaResetTimeout(); } catch (_) {} }
       await czekaj(INTERWAL_MS);
-      st = stanBlokow();
+      st = zbierzPozycje();
       if (st.lista.length !== poprzednio) { poprzednio = st.lista.length; stabilnyOd = Date.now(); }
     }
 
-    if (!st.kontener) {
-      return zakoncz({ ok: false, error: 'Nie znaleziono kontenera: ' + KONTENER + ' (ani zapasowego: ' + SELEKTOR_ZAPASOWY + ')' });
-    }
     if (!st.lista.length) {
-      return zakoncz({ ok: false, error: 'Kontener znaleziony (' + st.uzytySelektor + '), ale nie ma w nim widocznych bloków.' });
+      return zakoncz({
+        ok: false,
+        error: 'Nie znaleziono pozycji listy — ani [role=option], ani bloków w: ' + KONTENER +
+          '. Upewnij sie, ze lista rozwijana jest OTWARTA, zanim ten blok sie uruchomi.',
+      });
     }
 
-    /* ostatni blok i właściwy element klikalny w jego środku */
-    const blok = st.lista[st.lista.length - 1];
-    let cel = blok;
+    /* OSTATNIA pozycja — klikamy w sam wiersz */
+    const wiersz = st.lista[st.lista.length - 1];
+    try { wiersz.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+    await czekaj(150);
+
+    const doc = wiersz.ownerDocument || document;
+    const win = doc.defaultView || window;
+    const box = wiersz.getBoundingClientRect();
+    const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+
+    /* celuj w najgłębszy element w środku wiersza (jak prawdziwy kursor);
+       zdarzenia i tak bąbelkują do wiersza i listy */
+    let cel = wiersz;
     try {
-      const wewn = blok.querySelector('a, button, [role="button"], [onclick]');
-      if (wewn && widoczny(wewn)) cel = wewn;
+      const p = doc.elementFromPoint(cx, cy);
+      if (p && wiersz.contains(p)) cel = p;
     } catch (_) {}
 
-    /* kliknięcie */
-    try { cel.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
-    await czekaj(150);
-    const doc = cel.ownerDocument || document;
-    const win = doc.defaultView || window;
-    const box = cel.getBoundingClientRect();
-    const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
     const props = { bubbles: true, cancelable: true, composed: true, view: win, button: 0, clientX: cx, clientY: cy };
-
-    let naWierzchu = null;
-    try { naWierzchu = doc.elementFromPoint(cx, cy); } catch (_) {}
-
-    const klik = (el) => {
-      try {
-        el.dispatchEvent(new win.PointerEvent('pointerover', props));
-        el.dispatchEvent(new win.MouseEvent('mouseover', props));
-        el.dispatchEvent(new win.PointerEvent('pointerdown', props));
-        el.dispatchEvent(new win.MouseEvent('mousedown', props));
-        el.dispatchEvent(new win.PointerEvent('pointerup', props));
-        el.dispatchEvent(new win.MouseEvent('mouseup', props));
-        el.dispatchEvent(new win.MouseEvent('click', props));
-      } catch (_) {}
-      try { if (typeof el.click === 'function') el.click(); } catch (_) {}
-    };
-
-    klik(cel);
-    if (naWierzchu && naWierzchu !== cel && !cel.contains(naWierzchu) && !naWierzchu.contains(cel)) {
-      klik(naWierzchu);
-    }
+    try {
+      cel.dispatchEvent(new win.PointerEvent('pointerover', props));
+      cel.dispatchEvent(new win.MouseEvent('mouseover', props));
+      cel.dispatchEvent(new win.MouseEvent('mousemove', props));
+      cel.dispatchEvent(new win.PointerEvent('pointerdown', props));
+      cel.dispatchEvent(new win.MouseEvent('mousedown', props));
+      cel.dispatchEvent(new win.PointerEvent('pointerup', props));
+      cel.dispatchEvent(new win.MouseEvent('mouseup', props));
+      cel.dispatchEvent(new win.MouseEvent('click', props));
+    } catch (_) {}
+    try { if (wiersz !== cel && typeof wiersz.click === 'function') wiersz.click(); } catch (_) {}
 
     zakoncz({
       ok: true,
-      uzytySelektor: st.uzytySelektor,
-      ktoryBlok: st.lista.length + ' z ' + st.lista.length + ' (ostatni)',
-      klikniety: '<' + cel.tagName.toLowerCase() + '> ' + (cel.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+      zrodlo: st.zrodlo,
+      pozycja: st.lista.length + ' z ' + st.lista.length + ' (ostatnia)',
+      klikniety: (wiersz.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '<' + wiersz.tagName.toLowerCase() + '>',
       czekalemMs: Date.now() - start,
     });
   } catch (err) {
