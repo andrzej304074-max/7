@@ -1,15 +1,12 @@
 /*
- * Blok JavaScript dla Automy — KLIKNIJ OSTATNIĄ POZYCJĘ LISTY ROZWIJANEJ.
+ * Blok JavaScript dla Automy — KLIKNIJ OSTATNIĄ KATEGORIĘ W DRZEWKU
+ * (app.controlresell.com — lista rozwijana kategorii z wyszukiwaniem).
  *
- * Przeznaczone dla dropdownów z wyszukiwaniem. Kolejność szukania pozycji:
- *  1. prawdziwe opcje listy: [role="option"] (tak zbudowana jest większość
- *     list rozwijanych z wyszukiwarką),
- *  2. zapasowo: widoczne bloki w kontenerze KONTENER (dzieci), z pominięciem
- *     elementów <button> — żeby nie klikać stopek typu „pokaż więcej".
- *
- * Klika OSTATNIĄ znalezioną pozycję — bezpośrednio w wiersz (bez wchodzenia
- * w przyciski w środku), pełną sekwencją pointer/mouse + click().
- * Czeka, aż lista przestanie się zmieniać (wyniki wyszukiwania się ustalą).
+ * Struktura strony: kontener div.overflow-y-auto.p-1, w nim wiersze
+ * div.cursor-pointer. Wiersze rozwijalne mają jako pierwsze dziecko
+ * <button> ze strzałką; wiersze KOŃCOWE (do wybrania, np. "Dresy")
+ * strzałki nie mają. Skrypt klika OSTATNI wiersz końcowy — w sam wiersz,
+ * nigdy w strzałkę.
  *
  * Wynik pokazuje plakietką na stronie (zielona = OK, czerwona = błąd)
  * i zwraca przez automaNextBlock.
@@ -18,10 +15,11 @@
  */
 (async () => {
   /* ====== KONFIGURACJA ====== */
-  const KONTENER = 'div.p-1:nth-child(2)'; // zapasowy kontener, gdy brak [role=option]
-  const SELEKTOR_ZAPASOWY = 'div.p-1';
-  const STABILIZACJA_MS = 800;             // ile ms lista ma się nie zmieniać przed kliknięciem
-  const MAKS_CZEKANIE_MS = 15000;          // maksymalny czas czekania; 0 = bez limitu
+  const KONTENER = 'div.overflow-y-auto.p-1, div.p-1'; // kontener listy
+  const WIERSZ = '.cursor-pointer';                    // wiersze drzewka
+  const TYLKO_KONCOWE = true;    // true = klikaj tylko wiersze bez strzałki (ostatni poziom)
+  const STABILIZACJA_MS = 800;   // ile ms lista ma się nie zmieniać przed kliknięciem
+  const MAKS_CZEKANIE_MS = 15000;
   const INTERWAL_MS = 250;
   const PLAKIETKA_MS = 10000;
   /* ========================== */
@@ -51,7 +49,7 @@
     if (zakonczono) return;
     zakonczono = true;
     console.log('[click-last]', dane);
-    if (dane.ok) pokaz('KLIKNIETO: ' + dane.klikniety + '\nzrodlo: ' + dane.zrodlo + '\npozycja: ' + dane.pozycja, '#1a7f37');
+    if (dane.ok) pokaz('KLIKNIETO: ' + dane.kliknieto + '\ntyp: ' + dane.typ + '\npozycja: ' + dane.pozycja, '#1a7f37');
     else pokaz('BLAD: ' + dane.error, '#b91c1c');
     if (typeof automaNextBlock === 'function') automaNextBlock(dane);
   };
@@ -70,128 +68,97 @@
       try {
         const r = el.getBoundingClientRect();
         if (!r.width || !r.height) return false;
-        const st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+        const st = getComputedStyle(el);
         return st.visibility !== 'hidden' && st.display !== 'none' && st.opacity !== '0';
       } catch (_) { return false; }
     };
 
-    /* wszystkie dokumenty: strona + iframe'y (same-origin) */
-    const dokumenty = () => {
-      const docs = [document];
-      const zbierzRamki = (doc) => {
-        let ramki = [];
-        try { ramki = doc.querySelectorAll('iframe, frame'); } catch (_) {}
-        for (let i = 0; i < ramki.length; i++) {
-          try {
-            const d = ramki[i].contentDocument;
-            if (d && docs.indexOf(d) === -1) { docs.push(d); zbierzRamki(d); }
-          } catch (_) {}
-        }
-      };
-      zbierzRamki(document);
-      return docs;
+    /* wiersz jest "końcowy", gdy nie ma strzałki rozwijania (button jako dziecko) */
+    const koncowy = (w) => {
+      try { return !w.querySelector(':scope > button'); } catch (_) { return true; }
     };
 
-    /* dopasowania selektora także w shadow DOM */
-    const znajdzWszedzie = (sel) => {
-      const wyniki = [];
-      const szukaj = (root) => {
-        try {
-          const m = root.querySelectorAll(sel);
-          for (let i = 0; i < m.length; i++) wyniki.push(m[i]);
-        } catch (_) {}
-        let all = [];
-        try { all = root.querySelectorAll('*'); } catch (_) {}
-        for (let i = 0; i < all.length; i++) {
-          if (all[i].shadowRoot) szukaj(all[i].shadowRoot);
-        }
-      };
-      const docs = dokumenty();
-      for (let i = 0; i < docs.length; i++) szukaj(docs[i]);
-      return wyniki;
-    };
-
-    /* pozycje listy: najpierw role=option, potem bloki kontenera bez <button> */
-    const zbierzPozycje = () => {
-      let opcje = znajdzWszedzie('[role="option"]').filter(widoczny);
-      if (opcje.length) return { zrodlo: '[role=option]', lista: opcje };
-
-      let kandydaci = znajdzWszedzie(KONTENER);
-      let zrodlo = KONTENER;
-      if (!kandydaci.length && SELEKTOR_ZAPASOWY) {
-        kandydaci = znajdzWszedzie(SELEKTOR_ZAPASOWY);
-        zrodlo = SELEKTOR_ZAPASOWY + ' (zapasowy)';
-      }
+    const zbierz = () => {
+      let kontenery = [];
+      try {
+        kontenery = Array.prototype.slice.call(document.querySelectorAll(KONTENER)).filter(widoczny);
+      } catch (_) {}
       let najlepszy = null, najwiecej = -1;
-      for (let i = 0; i < kandydaci.length; i++) {
-        const n = Array.prototype.slice.call(kandydaci[i].children).filter(widoczny).length;
-        if (n > najwiecej) { najwiecej = n; najlepszy = kandydaci[i]; }
+      for (let i = 0; i < kontenery.length; i++) {
+        let n = 0;
+        try { n = kontenery[i].querySelectorAll(WIERSZ).length; } catch (_) {}
+        if (n > najwiecej) { najwiecej = n; najlepszy = kontenery[i]; }
       }
-      if (!najlepszy) return { zrodlo, lista: [] };
-      const lista = Array.prototype.slice.call(najlepszy.children)
-        .filter(widoczny)
-        .filter((el) => el.tagName !== 'BUTTON' && !(el.children.length === 1 && el.children[0].tagName === 'BUTTON'));
-      return { zrodlo, lista };
+      if (!najlepszy) return { wiersze: [], koncowe: [] };
+      let wiersze = [];
+      try {
+        wiersze = Array.prototype.slice.call(najlepszy.querySelectorAll(WIERSZ)).filter(widoczny);
+      } catch (_) {}
+      return { wiersze, koncowe: wiersze.filter(koncowy) };
     };
 
-    /* czekaj aż pozycje są i lista przestanie się zmieniać */
+    /* czekaj na wiersze + stabilizacja listy (wyniki wyszukiwania muszą się ustalić) */
     const start = Date.now();
-    let st = zbierzPozycje();
-    let poprzednio = st.lista.length;
+    let st = zbierz();
+    let poprzednio = st.wiersze.length + '/' + st.koncowe.length;
     let stabilnyOd = Date.now();
     while (true) {
-      if (st.lista.length > 0 && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
+      const gotowe = TYLKO_KONCOWE ? st.koncowe.length > 0 : st.wiersze.length > 0;
+      if (gotowe && Date.now() - stabilnyOd >= STABILIZACJA_MS) break;
       if (!bezLimitu && Date.now() - start >= MAKS_CZEKANIE_MS) break;
       if (typeof automaResetTimeout === 'function') { try { automaResetTimeout(); } catch (_) {} }
       await czekaj(INTERWAL_MS);
-      st = zbierzPozycje();
-      if (st.lista.length !== poprzednio) { poprzednio = st.lista.length; stabilnyOd = Date.now(); }
+      st = zbierz();
+      const teraz = st.wiersze.length + '/' + st.koncowe.length;
+      if (teraz !== poprzednio) { poprzednio = teraz; stabilnyOd = Date.now(); }
     }
 
-    if (!st.lista.length) {
+    let lista = TYLKO_KONCOWE ? st.koncowe : st.wiersze;
+    let typ = TYLKO_KONCOWE ? 'koncowy (bez strzalki)' : 'dowolny wiersz';
+    if (!lista.length && st.wiersze.length) {
+      lista = st.wiersze; // awaryjnie: są tylko wiersze ze strzałką
+      typ = 'kategoria ze strzalka (brak koncowych)';
+    }
+    if (!lista.length) {
       return zakoncz({
         ok: false,
-        error: 'Nie znaleziono pozycji listy — ani [role=option], ani bloków w: ' + KONTENER +
-          '. Upewnij sie, ze lista rozwijana jest OTWARTA, zanim ten blok sie uruchomi.',
+        error: 'Nie znaleziono zadnego wiersza listy (' + WIERSZ + ' w ' + KONTENER + '). ' +
+          'Lista rozwijana musi byc OTWARTA, zanim ten blok sie uruchomi.',
       });
     }
 
-    /* OSTATNIA pozycja — klikamy w sam wiersz */
-    const wiersz = st.lista[st.lista.length - 1];
+    /* OSTATNI wiersz — klik w sam wiersz (środek etykiety, nie strzałka) */
+    const wiersz = lista[lista.length - 1];
     try { wiersz.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
     await czekaj(150);
 
-    const doc = wiersz.ownerDocument || document;
-    const win = doc.defaultView || window;
     const box = wiersz.getBoundingClientRect();
     const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
 
-    /* celuj w najgłębszy element w środku wiersza (jak prawdziwy kursor);
-       zdarzenia i tak bąbelkują do wiersza i listy */
     let cel = wiersz;
     try {
-      const p = doc.elementFromPoint(cx, cy);
-      if (p && wiersz.contains(p)) cel = p;
+      const p = document.elementFromPoint(cx, cy);
+      if (p && wiersz.contains(p) && p.tagName !== 'BUTTON' && !p.closest('button')) cel = p;
     } catch (_) {}
 
-    const props = { bubbles: true, cancelable: true, composed: true, view: win, button: 0, clientX: cx, clientY: cy };
+    const props = { bubbles: true, cancelable: true, composed: true, view: window, button: 0, clientX: cx, clientY: cy };
     try {
-      cel.dispatchEvent(new win.PointerEvent('pointerover', props));
-      cel.dispatchEvent(new win.MouseEvent('mouseover', props));
-      cel.dispatchEvent(new win.MouseEvent('mousemove', props));
-      cel.dispatchEvent(new win.PointerEvent('pointerdown', props));
-      cel.dispatchEvent(new win.MouseEvent('mousedown', props));
-      cel.dispatchEvent(new win.PointerEvent('pointerup', props));
-      cel.dispatchEvent(new win.MouseEvent('mouseup', props));
-      cel.dispatchEvent(new win.MouseEvent('click', props));
+      cel.dispatchEvent(new PointerEvent('pointerover', props));
+      cel.dispatchEvent(new MouseEvent('mouseover', props));
+      cel.dispatchEvent(new MouseEvent('mousemove', props));
+      cel.dispatchEvent(new PointerEvent('pointerdown', props));
+      cel.dispatchEvent(new MouseEvent('mousedown', props));
+      cel.dispatchEvent(new PointerEvent('pointerup', props));
+      cel.dispatchEvent(new MouseEvent('mouseup', props));
+      cel.dispatchEvent(new MouseEvent('click', props));
     } catch (_) {}
-    try { if (wiersz !== cel && typeof wiersz.click === 'function') wiersz.click(); } catch (_) {}
 
+    const etykieta = (wiersz.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
     zakoncz({
       ok: true,
-      zrodlo: st.zrodlo,
-      pozycja: st.lista.length + ' z ' + st.lista.length + ' (ostatnia)',
-      klikniety: (wiersz.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '<' + wiersz.tagName.toLowerCase() + '>',
+      kliknieto: etykieta || '<wiersz bez tekstu>',
+      typ,
+      pozycja: lista.length + ' z ' + lista.length + ' (ostatni)',
       czekalemMs: Date.now() - start,
     });
   } catch (err) {
