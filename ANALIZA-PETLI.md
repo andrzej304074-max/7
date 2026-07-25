@@ -227,6 +227,8 @@ ale 2 zapytania na sekundę zamiast 200).
    zamiast 7 workflow wołających się nawzajem w nieskończoność (punkt 2).
 2. **`Handle download`: timeout 1 000 → 30 000 ms** + ponawianie + porządek
    z plikami w `~/Downloads` (punkt 4).
+   ✔ timeout i ponawianie zrobione skryptem `narzedzia/popraw-workflow.js`;
+   zostaje porządek z plikami (sztywna ścieżka `pro1.jpg` — do zrobienia ręcznie).
 
 **Potem:**
 
@@ -234,9 +236,12 @@ ale 2 zapytania na sekundę zamiast 200).
    ✔ zrobione skryptem `narzedzia/popraw-timeouty.js` (domyślnie 20 000 ms).
 4. `Switch tab`: `prev-tab`/`next-tab` → dopasowanie po URL.
 5. `Element exists`: `80000 × 5 ms` → `600 × 500 ms`.
+   ✔ zrobione skryptem `narzedzia/popraw-workflow.js`.
 6. Włączyć `Retry` (2–3 próby, co 2 s) na blokach klikających i wgrywających.
+   ✔ zrobione skryptem `narzedzia/popraw-workflow.js` (3 próby co 2 s).
 7. Podpiąć brakujące gałęzie `fallback` w deciderze (9 bloków).
 8. `execContext` → `background`, `blockDelay` → 300–500 ms.
+   ✔ zrobione skryptem `narzedzia/popraw-workflow.js` (`blockDelay` = 300 ms).
 
 Punkty 3–8 da się zrobić hurtem skryptem na plikach `.automa.json`
 (zmiana wartości + ponowny import do Automy), bez ręcznego klikania
