@@ -231,6 +231,7 @@ ale 2 zapytania na sekundę zamiast 200).
 **Potem:**
 
 3. `waitSelectorTimeout` 5 000 → 15 000–20 000 ms we wszystkich blokach.
+   ✔ zrobione skryptem `narzedzia/popraw-timeouty.js` (domyślnie 20 000 ms).
 4. `Switch tab`: `prev-tab`/`next-tab` → dopasowanie po URL.
 5. `Element exists`: `80000 × 5 ms` → `600 × 500 ms`.
 6. Włączyć `Retry` (2–3 próby, co 2 s) na blokach klikających i wgrywających.
