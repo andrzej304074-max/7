@@ -54,23 +54,32 @@ w którym każdy woła następnego i czeka w nieskończoność.
 
 ---
 
-## 3. Przyczyna #2 — wyciek kart i okien
+## 3. Sprzątanie kart i okien — sprawdzone, jest w porządku
 
-| workflow | `New tab` | `Close tab` | `New window` | `Close window` |
-|---|---|---|---|---|
-| każdy produktowy (×6) | 15 | 3 | 1 | brak takiego bloku |
-| decider | 39 | 21 | 1 | brak takiego bloku |
+**Tu nie ma wycieku.** Każdy workflow zaczyna się blokiem `New window`
+i **każda gałąź kończąca kończy się blokiem zamykającym całe okno**, tuż przed
+`Execute workflow`:
 
-Wszystkie 129 bloków `New tab` mają `updatePrevTab = false`, czyli **zawsze
-otwierają nową kartę**, nigdy nie odświeżają istniejącej.
+```json
+{ "closeType": "window", "activeTab": true, "allWindows": false }
+```
 
-Nawet jeśli część gałęzi się nie wykonuje, bilans jest mocno dodatni:
-**~90 nieusuniętych kart i 7 okien na okrążenie**. Po kilku godzinach to setki
-kart. Chrome zaczyna zwalniać i usypiać karty w tle (discard), przez co strona,
-na którą Automa chce wrócić, bywa wyładowana i selektor „nagle" nie istnieje.
+Nie jest to zamknięcie jednej karty — `closeType: "window"` zamyka **okno wraz
+ze wszystkimi kartami**, które workflow w nim pootwierał. Bilans:
 
-**Poprawka:** `Close tab` po każdej sekcji, ustawienie `Update previous tab`
-tam, gdzie to ta sama strona, oraz zamykanie okna na końcu workflow.
+| workflow | `New window` | zamknięcia okna | dodatkowo `Close tab` |
+|---|---|---|---|
+| każdy produktowy (×6) | 1 | 3 (po jednym na każdą gałąź końcową) | 0 |
+| decider | 1 | 1 | 20 (sprzątanie w trakcie) |
+
+W kodzie Automy blok dostaje `this.windowId` silnika, czyli zamyka **okno tego
+workflow**, nie okno użytkownika. 15 kart otwartych w trakcie jednego przebiegu
+znika razem z oknem.
+
+Jedyne zastrzeżenie: gdyby `this.windowId` był nieustawiony (np. gdyby blok
+`New window` poszedł w `fallback` i okno nigdy nie powstało), Automa spada do
+`windows.getCurrent()` — wtedy zamknie okno aktualnie aktywne. To wąski
+przypadek brzegowy, nie codzienna ścieżka.
 
 ---
 
@@ -118,15 +127,19 @@ Wszystkie bloki `Switch tab` (13 w każdym produktowym, 20 w deciderze) używaj�
 { "findTabBy": "prev-tab" }   // albo "next-tab"
 ```
 
-To nawigacja **po pozycji**, nie po adresie. Wystarczy jedna dodatkowa karta —
-otwarta przez stronę, przez pobieranie, przez reklamę, przez nieudany
-`Close tab` z poprzedniego okrążenia — i od tego momentu **każdy `Switch tab`
-trafia w złą kartę**. Kliknięcia lecą wtedy w przypadkową stronę, a błąd
-pojawia się dopiero kilka bloków dalej, w zupełnie niepowiązanym miejscu.
+To nawigacja **po pozycji**, nie po adresie. W jednym oknie workflow trzyma
+naraz kilkanaście kart (15 bloków `New tab` w produktowym, 39 w deciderze),
+a `prev-tab`/`next-tab` liczy sąsiada względem bieżącej.
 
-W połączeniu z wyciekiem kart z punktu 3 to jest bomba zegarowa: im dłużej
-działa, tym więcej luźnych kart, tym większa szansa, że „prev-tab" to już
-nie ta karta co trzeba.
+Wystarczy jedna nadmiarowa karta w tym oknie — otwarta przez samą stronę
+(`target=_blank`), przez podgląd pobranego pliku, przez reklamę — i od tego
+momentu **każdy kolejny `Switch tab` trafia o jedną kartę obok**. Kliknięcia
+lecą wtedy w przypadkową stronę, a błąd wyskakuje dopiero kilka bloków dalej,
+w zupełnie niepowiązanym miejscu.
+
+To nie kumuluje się między okrążeniami (okno jest zamykane, patrz punkt 3),
+ale w obrębie jednego przebiegu jest to loteria zależna od tego, co akurat
+zrobi strona.
 
 **Poprawka:** `Switch tab` → `Match tab URL` z wzorcem (np. `*://chatgpt.com/*`,
 `*://mail.google.com/*`) zamiast `prev-tab` / `next-tab`.
@@ -213,17 +226,16 @@ ale 2 zapytania na sekundę zamiast 200).
    zamiast 7 workflow wołających się nawzajem w nieskończoność (punkt 2).
 2. **`Handle download`: timeout 1 000 → 30 000 ms** + ponawianie + porządek
    z plikami w `~/Downloads` (punkt 4).
-3. **Zamykanie kart i okien** (punkt 3).
 
 **Potem:**
 
-4. `waitSelectorTimeout` 5 000 → 15 000–20 000 ms we wszystkich blokach.
-5. `Switch tab`: `prev-tab`/`next-tab` → dopasowanie po URL.
-6. `Element exists`: `80000 × 5 ms` → `600 × 500 ms`.
-7. Włączyć `Retry` (2–3 próby, co 2 s) na blokach klikających i wgrywających.
-8. Podpiąć brakujące gałęzie `fallback` w deciderze (9 bloków).
-9. `execContext` → `background`, `blockDelay` → 300–500 ms.
+3. `waitSelectorTimeout` 5 000 → 15 000–20 000 ms we wszystkich blokach.
+4. `Switch tab`: `prev-tab`/`next-tab` → dopasowanie po URL.
+5. `Element exists`: `80000 × 5 ms` → `600 × 500 ms`.
+6. Włączyć `Retry` (2–3 próby, co 2 s) na blokach klikających i wgrywających.
+7. Podpiąć brakujące gałęzie `fallback` w deciderze (9 bloków).
+8. `execContext` → `background`, `blockDelay` → 300–500 ms.
 
-Punkty 4–9 da się zrobić hurtem skryptem na plikach `.automa.json`
+Punkty 3–8 da się zrobić hurtem skryptem na plikach `.automa.json`
 (zmiana wartości + ponowny import do Automy), bez ręcznego klikania
 po kilkuset blokach.
