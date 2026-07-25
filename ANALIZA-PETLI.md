@@ -158,8 +158,9 @@ zrobi strona.
 | `forms` | 24 | 10 000 ms |
 
 5 sekund wystarcza na Gmaila/ChatGPT/iLoveIMG na wypoczętej przeglądarce.
-Nie wystarcza, gdy w tle wisi 200 kart i trwa upload. **To jest dokładnie ten
-mechanizm, przez który ten sam blok raz przechodzi, a raz nie.**
+Nie wystarcza, gdy w tym samym oknie trwa upload, schodzi pobieranie i rośnie
+zajętość pamięci z punktu 2. **To jest dokładnie ten mechanizm, przez który
+ten sam blok raz przechodzi, a raz nie.**
 
 **Obsługa błędów** — 195 z 197 bloków w workflow produktowych (331 w deciderze)
 ma:
